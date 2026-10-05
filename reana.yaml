@@ -2,27 +2,30 @@ version: 0.9.4
 inputs:
   files:
   - workflow/Snakefile
-  - workflow/scripts/parse_metadata.py
+  - workflow/scripts/parse_real_data_metadata.py
   - workflow/scripts/haddnano.py
   - workflow/scripts/Stat_comparison.py
+  - workflow/scripts/Plotting.py
+  - workflow/scripts/variables.py
   - workflow/scripts/metrics/metrics.py
   - workflow/shell_commands/cleanup_shell.txt
-  - workflow/shell_commands/main_steps_shell.txt
+  - workflow/shell_commands/real_data_step_shell.txt
+  - workflow/raw_files/DoubleEG.txt
   parameters:
-    # Provide the record ID of the dataset you want to simulate
-    record_id: 72677 #35755
-    # Provide the number of events you want the workflow to simulate
-    events: 10
-    # Provide the number events you want assigned to each job
-    eventsPerJob: 1
-    # Provide the eos_dir you want the results to be stored in
-    eos_outdir: "/eos/user/m/mtarshih/my_project"
+    record_id: 30521
+    raw_file_list: "DoubleEG.txt"
+    eos_mgm_url: "root://eospublic.cern.ch"
+    # Provide the number of RAW files to process (one reco/pat/nano job per
+    # file, must not exceed the number of lines in raw_file_list)
+    num_files: 1
+    # max number of events to process per job/file
+    eventsPerJob: 1000
+    # eos_dir you want the results to be stored in
+    eos_outdir: "/eos/user/a/aalatalo/snakemaketest/data-validation-test"
 workflow:
   file: workflow/Snakefile
   type: snakemake
 
-  engine_args: >-
-    --resources digi2raw_connections=40
   resources:
     kerberos: True
     cvmfs:

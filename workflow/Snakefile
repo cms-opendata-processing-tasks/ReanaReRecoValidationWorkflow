@@ -1,41 +1,56 @@
 import os
-import time 
+import time
 
 BASE_CONTAINER="docker://gitlab-registry.cern.ch/cms-cloud/cmssw-docker/cc7-cms"
 OPENDATACLIENT_CONTAINER="docker://cernopendata/cernopendata-client:latest"
 
 RECORD_ID=config.get("record_id", 0)
-totalEvents=config.get("events", 0)
+RAW_FILE_LIST=str(config.get("raw_file_list", "DoubleEG.txt")).strip()
+EOS_MGM_URL=str(config.get("eos_mgm_url", "root://eospublic.cern.ch")).strip()
+numFiles=config.get("num_files", 1)
 eventsPerJob=config.get("eventsPerJob", 1)
-EOS_PATH=config.get("eos_outdir", "not found")
+EOS_PATH=str(config.get("eos_outdir", "not found")).strip()
 
 
-jobIndex = list(range(1, int(totalEvents/eventsPerJob)+1))
+#
+# f-strings are deliberately avoided everywhere in this Snakefile due Reana not handling them well.
+RAW_FILES_PATH = "workflow/raw_files/" + RAW_FILE_LIST
+with open(RAW_FILES_PATH) as f:
+    RAW_FILES = [line.strip() for line in f if line.strip()]
+
+jobIndex = list(range(1, int(numFiles)+1))
+
+if numFiles > len(RAW_FILES):
+    raise ValueError(
+        "num_files (" + str(numFiles) + ") exceeds the number of RAW files listed in "
+        + RAW_FILES_PATH + " (" + str(len(RAW_FILES)) + ")"
+    )
 
 with open("workflow/shell_commands/cleanup_shell.txt", "r") as f:
     CLEANUP_SHELL = f.read()
 
-with open("workflow/shell_commands/main_steps_shell.txt", "r") as f:
-    MAIN_STEP_SHELL = f.read()
+with open("workflow/shell_commands/real_data_step_shell.txt", "r") as f:
+    REAL_DATA_STEP_SHELL = f.read()
 
 onstart:
     os.makedirs("workflow/results/metrics", exist_ok=True)
-    
+
     with open("workflow/results/metrics/workflow_start_time.txt", "w") as f:
         f.write(str(time.time()))
 
 onsuccess:
     with open("workflow/results/metrics/workflow_start_time.txt", "r") as f:
         start_time = float(f.read())
-    
+
     total_time = time.time() - start_time
 
     with open("workflow/results/metrics/workflow_total_time.txt", "w") as f:
-        f.write(f"Total Time (seconds): {total_time}")
+        f.write("Total Time (seconds): " + str(total_time))
 
 rule all:
     input:
         "results/comparison_report.csv",
+        "results/plots",
         "results/metrics/metrics.csv"
 
 rule fetch_metadata:
@@ -48,197 +63,12 @@ rule fetch_metadata:
         cernopendata-client get-metadata --recid {RECORD_ID} > {output.metadata}
         """
 
-rule parse_gen_metadata:
-    input:
-        metadata="record_metadata.json"
-    output:
-        temporary("gen_env.txt"),
-        cmd_file=temporary("cmsDriver_gen.txt")
-    params:
-        step="gen"
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        set -e
-        python3 workflow/scripts/parse_metadata.py {input.metadata} {output.cmd_file} {params.step}
-        """
-
-rule gen:
-    input:
-        cmd_file="cmsDriver_gen.txt",
-        environment="gen_env.txt"
-    output:
-        temporary("results/gen_{jobIndex}_confirm.txt")
-    params:
-        events=eventsPerJob,
-        step="gen",
-        prev_step="dummy",
-        pileup="dummy"
-    container:
-        BASE_CONTAINER
-    shell:
-        MAIN_STEP_SHELL
-
-rule parse_sim_metadata:
-    input:
-        metadata="record_metadata.json"
-    output:
-        temporary("pileup_record_id.txt"),
-        temporary("sim_env.txt"),
-        cmd_file=temporary("cmsDriver_sim.txt")
-    params:
-        step="sim"
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        set -e
-        python3 workflow/scripts/parse_metadata.py {input.metadata} {output.cmd_file} {params.step}
-        """
-
-rule sim:
-    input:
-        "results/gen_{jobIndex}_confirm.txt",
-        cmd_file="cmsDriver_sim.txt",
-        environment="sim_env.txt"
-    output:
-        temporary("results/sim_{jobIndex}_confirm.txt")
-    container:
-        BASE_CONTAINER
-    params:
-        events=eventsPerJob,
-        step="sim",
-        prev_step="gen",
-        pileup="dummy"
-    shell:
-        MAIN_STEP_SHELL
-
-rule gen_cleanup:
-    input:
-        "results/sim_{jobIndex}_confirm.txt"
-    output:
-        "results/cleanup/gen_cleanup_{jobIndex}_confirm.txt"
-    params:
-        step="gen"
-    container:
-        BASE_CONTAINER
-    shell:
-        CLEANUP_SHELL
-
-rule predigi2raw:
-    input:
-        record_id='pileup_record_id.txt'
-    output:
-        temporary("results/pileup_file.txt")
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-            pileup_recid="$(cat {input.record_id})"
-            mkdir -p results
-            cernopendata-client get-file-locations --recid $pileup_recid --protocol xrootd > {output}
-        """
-
-rule parse_digi2raw_metadata:
-    input:
-        metadata="record_metadata.json"
-    output:
-        temporary("digi2raw_env.txt"),
-        cmd_file=temporary("cmsDriver_digi2raw.txt")
-    params:
-        step="digi2raw"
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        python3 workflow/scripts/parse_metadata.py {input.metadata} {output.cmd_file} {params.step}
-        """
-
-rule digi2raw:
-    input:
-        "results/cleanup/gen_cleanup_{jobIndex}_confirm.txt",
-        "results/sim_{jobIndex}_confirm.txt",
-        pileup="results/pileup_file.txt",
-        cmd_file="cmsDriver_digi2raw.txt",
-        environment="digi2raw_env.txt"
-    output:
-        temporary("results/digi2raw_{jobIndex}_confirm.txt")
-    container:
-        BASE_CONTAINER
-    resources:
-        digi2raw_connections=1
-    params:
-        events=eventsPerJob,
-        step="digi2raw",
-        prev_step="sim",
-        pileup="results/pileup_file.txt"
-    shell:
-        MAIN_STEP_SHELL
-
-rule sim_cleanup:
-    input:
-        "results/digi2raw_{jobIndex}_confirm.txt"
-    output:
-        "results/cleanup/sim_cleanup_{jobIndex}_confirm.txt"
-    params:
-        step="sim"
-    container:
-        BASE_CONTAINER
-    shell:
-        CLEANUP_SHELL
-
-rule parse_hlt_metadata:
-    input:
-        metadata="record_metadata.json"
-    output:
-        temporary("hlt_env.txt"),
-        cmd_file=temporary("cmsDriver_hlt.txt")
-    params:
-        step="hlt"
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        python3 workflow/scripts/parse_metadata.py {input.metadata} {output.cmd_file} {params.step}
-        """
-
-rule hlt:
-    input:
-        "results/cleanup/sim_cleanup_{jobIndex}_confirm.txt",
-        "results/digi2raw_{jobIndex}_confirm.txt",
-        cmd_file="cmsDriver_hlt.txt",
-        environment="hlt_env.txt"
-    output:
-        temporary("results/hlt_{jobIndex}_confirm.txt")
-    container:
-        BASE_CONTAINER
-    params:
-        events=eventsPerJob,
-        step="hlt",
-        prev_step="digi2raw",
-        pileup="dummy"
-    shell:
-        MAIN_STEP_SHELL
-
-rule digi2raw_cleanup:
-    input:
-        "results/hlt_{jobIndex}_confirm.txt"
-    output:
-        "results/cleanup/digi2raw_cleanup_{jobIndex}_confirm.txt"
-    params:
-        step="digi2raw"
-    container:
-        BASE_CONTAINER
-    shell:
-        CLEANUP_SHELL
-
 rule parse_reco_metadata:
     input:
         metadata="record_metadata.json"
     output:
         temporary("reco_env.txt"),
-        cmd_file=temporary("cmsDriver_reco.txt")
+        cmd_file=temporary("cmsRun_fetch_reco.txt")
     params:
         step="reco"
     container:
@@ -246,14 +76,12 @@ rule parse_reco_metadata:
     shell:
         """
         set -e
-        python3 workflow/scripts/parse_metadata.py {input.metadata} {output.cmd_file} {params.step}
+        python3 workflow/scripts/parse_real_data_metadata.py {input.metadata} {params.step} {output.cmd_file} reco_env.txt
         """
 
 rule reco:
     input:
-        "results/cleanup/digi2raw_cleanup_{jobIndex}_confirm.txt",
-        "results/hlt_{jobIndex}_confirm.txt",
-        cmd_file="cmsDriver_reco.txt",
+        cmd_file="cmsRun_fetch_reco.txt",
         environment="reco_env.txt"
     output:
         temporary("results/reco_{jobIndex}_confirm.txt")
@@ -262,58 +90,11 @@ rule reco:
     params:
         events=eventsPerJob,
         step="reco",
-        prev_step="hlt",
-        pileup="dummy"
+        prev_step="dummy"
     resources:
         kubernetes_memory_limit='8Gi'
     shell:
-        MAIN_STEP_SHELL
-
-rule hlt_cleanup:
-    input:
-        "results/reco_{jobIndex}_confirm.txt"
-    output:
-        "results/cleanup/hlt_cleanup_{jobIndex}_confirm.txt"
-    params:
-        step="hlt"
-    container:
-        BASE_CONTAINER
-    shell:
-        CLEANUP_SHELL
-
-rule parse_pat_metadata:
-    input:
-        metadata="record_metadata.json"
-    output:
-        temporary("pat_env.txt"),
-        cmd_file=temporary("cmsDriver_pat.txt")
-    params:
-        step="pat"
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        set -e
-        python3 workflow/scripts/parse_metadata.py {input.metadata} {output.cmd_file} {params.step}
-        """
-
-rule pat:
-    input:
-        "results/cleanup/hlt_cleanup_{jobIndex}_confirm.txt",
-        "results/reco_{jobIndex}_confirm.txt",
-        environment="pat_env.txt",
-        cmd_file="cmsDriver_pat.txt"
-    output:
-        temporary("results/pat_{jobIndex}_confirm.txt")
-    params:
-        events=eventsPerJob,
-        step="pat",
-        prev_step="reco",
-        pileup="dummy"
-    container:
-        BASE_CONTAINER 
-    shell:
-        MAIN_STEP_SHELL
+        REAL_DATA_STEP_SHELL
 
 rule reco_cleanup:
     input:
@@ -327,39 +108,37 @@ rule reco_cleanup:
     shell:
         CLEANUP_SHELL
 
-rule parse_nano_metadata:
+rule parse_pat_metadata:
     input:
         metadata="record_metadata.json"
     output:
-        temporary("nano_env.txt"),
-        cmd_file=temporary("cmsDriver_nano.txt")
+        temporary("pat_env.txt"),
+        cmd_file=temporary("cmsRun_fetch_pat.txt")
     params:
-        step="nano"
+        step="pat"
     container:
         OPENDATACLIENT_CONTAINER
     shell:
         """
         set -e
-        python3 workflow/scripts/parse_metadata.py {input.metadata} {output.cmd_file} {params.step}
+        python3 workflow/scripts/parse_real_data_metadata.py {input.metadata} {params.step} {output.cmd_file} pat_env.txt
         """
 
-rule nano:
+rule pat:
     input:
-        "results/cleanup/reco_cleanup_{jobIndex}_confirm.txt",
-        "results/pat_{jobIndex}_confirm.txt",
-        environment="nano_env.txt",
-        cmd_file="cmsDriver_nano.txt"
+        "results/reco_{jobIndex}_confirm.txt",
+        cmd_file="cmsRun_fetch_pat.txt",
+        environment="pat_env.txt"
     output:
-        temporary("results/nano_{jobIndex}_confirm.txt")
-    params:
-        events=eventsPerJob,
-        step="nano",
-        prev_step="pat",
-        pileup="dummy"
+        temporary("results/pat_{jobIndex}_confirm.txt")
     container:
         BASE_CONTAINER
+    params:
+        events=eventsPerJob,
+        step="pat",
+        prev_step="reco"
     shell:
-        MAIN_STEP_SHELL
+        REAL_DATA_STEP_SHELL
 
 rule pat_cleanup:
     input:
@@ -373,6 +152,39 @@ rule pat_cleanup:
     shell:
         CLEANUP_SHELL
 
+rule parse_nano_metadata:
+    input:
+        metadata="record_metadata.json"
+    output:
+        temporary("nano_env.txt"),
+        cmd_file=temporary("cmsRun_fetch_nano.txt")
+    params:
+        step="nano"
+    container:
+        OPENDATACLIENT_CONTAINER
+    shell:
+        """
+        set -e
+        python3 workflow/scripts/parse_real_data_metadata.py {input.metadata} {params.step} {output.cmd_file} nano_env.txt
+        """
+
+rule nano:
+    input:
+        "results/cleanup/reco_cleanup_{jobIndex}_confirm.txt",
+        "results/pat_{jobIndex}_confirm.txt",
+        cmd_file="cmsRun_fetch_nano.txt",
+        environment="nano_env.txt"
+    output:
+        temporary("results/nano_{jobIndex}_confirm.txt")
+    container:
+        BASE_CONTAINER
+    params:
+        events=eventsPerJob,
+        step="nano",
+        prev_step="pat"
+    shell:
+        REAL_DATA_STEP_SHELL
+
 rule merge_nano:
     input:
         expand("results/cleanup/pat_cleanup_{jobIndex}_confirm.txt", jobIndex=jobIndex),
@@ -380,8 +192,13 @@ rule merge_nano:
     output:
         merged_local="results/nano_merged.root"
     params:
-        eos_inputs=" ".join([f"{EOS_PATH}/results/nano_{i}.root" for i in jobIndex]),
-        eos_output=f"{EOS_PATH}/results/nano_merged.root"
+        # The nano rule now writes flat NanoAOD directly (a second
+        # NanoAODOutputModule added to the live production process - see
+        # real_data_step_shell.txt), so these are ordinary flat NanoAOD
+        # files and plain haddnano.py merging (same as the MC pipeline)
+        # applies directly - no EDM remerge step needed.
+        eos_inputs=" ".join([EOS_PATH + "/results/nano_" + str(i) + ".root" for i in jobIndex]),
+        eos_output=EOS_PATH + "/results/nano_merged.root"
     container:
         BASE_CONTAINER
     shell:
@@ -392,47 +209,70 @@ rule merge_nano:
         echo "Sourcing CMS environment to get ROOT..."
         export SCRAM_ARCH=slc7_amd64_gcc700
         source /cvmfs/cms.cern.ch/cmsset_default.sh
-        
+
         scram p CMSSW CMSSW_10_6_30
         cd CMSSW_10_6_30/src/
         eval `scramv1 runtime -sh`
         cd ../../
-        
+
         echo "Merging all NanoAOD files..."
         python $WORKDIR/workflow/scripts/haddnano.py {output.merged_local} {params.eos_inputs}
 
         cp {output.merged_local} {params.eos_output}
         """
 
-rule histogram_results:
+rule fetch_reference_url:
     input:
-        merged_nano="results/nano_merged.root"
+        metadata="record_metadata.json"
     output:
-        report="results/comparison_report.csv" 
-    params:
-        eos_output=f"{EOS_PATH}/results/comparison_report.csv"
+        temporary("reference_url.txt")
     container:
-        "python:3.11-slim" 
+        OPENDATACLIENT_CONTAINER
     shell:
         """
-        set -e 
+        set -e
+        cernopendata-client get-file-locations --recid {RECORD_ID} --protocol xrootd | head -n 1 \\
+            | sed 's#root://eospublic.cern.ch/#https://opendata.cern.ch#' > {output}
+        """
+
+rule histogram_results:
+    input:
+        merged_nano="results/nano_merged.root",
+        reference_url="reference_url.txt"
+    output:
+        report="results/comparison_report.csv",
+        plots=directory("results/plots")
+    params:
+        eos_output=EOS_PATH + "/results/comparison_report.csv",
+        eos_plots=EOS_PATH + "/results/plots"
+    container:
+        "python:3.11-slim"
+    shell:
+        """
+        set -e
         export WORKDIR=$(pwd)
 
         echo "Setting up local Python environment"
         mkdir -p $WORKDIR/my_python_libs
 
         echo "Installing required packages"
-        pip install --no-cache-dir uproot awkward numpy pandas boost_histogram scipy --break-system-packages --target $WORKDIR/my_python_libs
+        pip install --no-cache-dir uproot awkward numpy pandas boost_histogram scipy matplotlib --break-system-packages --target $WORKDIR/my_python_libs
 
         export PYTHONPATH=$WORKDIR/my_python_libs:$PYTHONPATH
 
-        echo "Downloading reference data file"
-        python3 -c "import urllib.request; urllib.request.urlretrieve('https://opendata.cern.ch/eos/opendata/cms/mc/RunIISummer20UL16NanoAODv9/WWTo2L2Nu_TuneCP5_DoubleScattering_13TeV-pythia8/NANOAODSIM/106X_mcRun2_asymptotic_v17-v2/50000/C04CAA8D-3FA5-964C-8D54-1B4601CFD366.root', 'reference_data.root')"
+        echo "Downloading reference NanoAOD file (official reco output for the same record)"
+        reference_url="$(cat {input.reference_url})"
+        python3 -c "import urllib.request; urllib.request.urlretrieve('$reference_url', 'reference_data.root')"
 
         echo "Running statistical comparison"
         python3 workflow/scripts/Stat_comparison.py {input.merged_nano} reference_data.root {output.report}
 
+        echo "Plotting our output vs the reference"
+        python3 workflow/scripts/Plotting.py {input.merged_nano} reference_data.root {output.report} {output.plots}
+
         cp {output.report} {params.eos_output}
+        mkdir -p {params.eos_plots}
+        cp {output.plots}/*.png {params.eos_plots}/
         """
 rule nano_cleanup:
     input:
@@ -468,4 +308,3 @@ rule measure_metrics:
         mkdir -p {EOS_PATH}/results/metrics
         cp -r results/metrics/*.csv results/metrics/*.md {EOS_PATH}/results/metrics/
         """
-# ask why having it as {input.sizes} instead of {params.sizes} doesn't return a warning

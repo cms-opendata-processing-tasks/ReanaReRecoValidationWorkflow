@@ -14,3 +14,4 @@ plot_env
 reana-env-qa.sh
 plots
 Testing_fragment.py
+workflow/scripts/__pycache__

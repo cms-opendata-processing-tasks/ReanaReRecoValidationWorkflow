@@ -5,7 +5,7 @@ from copy import deepcopy
 
 metrics_path = sys.argv[1]
 
-steps = {"gen": [], "sim": [], "digi2raw": [], "hlt": [], "pat": [], "reco": [], "nano": []}
+steps = {"reco": [], "pat": [], "nano": []}
 step_metrics = {"time": deepcopy(steps), "storage": deepcopy(steps)}
 
 for filename in os.listdir(metrics_path):
@@ -20,10 +20,10 @@ for filename in os.listdir(metrics_path):
     elif filename.endswith(".size"):
         step_metrics["storage"][step].append(int(metric[:-2]))
 
-steps_summary = {"gen": {}, "sim": {}, "digi2raw": {}, "hlt": {}, "pat": {}, "reco": {}, "nano": {}}
+steps_summary = {"reco": {}, "pat": {}, "nano": {}}
 summary_dict = {"time": deepcopy(steps_summary), "storage": deepcopy(steps_summary)}
 
-prev = {"sim": "gen", "digi2raw": "sim", "hlt": "digi2raw", "pat": "hlt", "reco": "pat", "nano": "reco"}
+prev = {"pat": "reco", "nano": "pat"}
 
 
 for k,v in step_metrics['storage'].items():
@@ -31,7 +31,7 @@ for k,v in step_metrics['storage'].items():
     summary_dict["storage"][k]["Total Size (GBs)"] = sum(v) / (1024**3)
     summary_dict["storage"][k]["File Count"] = len(v)
 
-    if k == "gen":
+    if k == "reco":
         summary_dict["storage"][k]["Peak Storage (GBs)"] = summary_dict["storage"][k]["Total Size (GBs)"]
     else:
         summary_dict["storage"][k]["Peak Storage (GBs)"] = (summary_dict["storage"][k]["Total Size (Bytes)"] + summary_dict["storage"][prev[k]]["Total Size (Bytes)"]) / (1024**3)
@@ -43,8 +43,8 @@ for k,v in step_metrics['time'].items():
 time_df = pd.DataFrame.from_dict(summary_dict["time"], orient="index")
 storage_df = pd.DataFrame.from_dict(summary_dict["storage"], orient="index")
 
-time_details_df = pd.DataFrame.from_dict(step_metrics["time"], orient="index", columns=list(range(1, len(step_metrics["time"]["gen"])+1)))
-storage_details_df = pd.DataFrame.from_dict(step_metrics["storage"], orient="index", columns=list(range(1, len(step_metrics["time"]["gen"])+1)))
+time_details_df = pd.DataFrame.from_dict(step_metrics["time"], orient="index", columns=list(range(1, len(step_metrics["time"]["reco"])+1)))
+storage_details_df = pd.DataFrame.from_dict(step_metrics["storage"], orient="index", columns=list(range(1, len(step_metrics["time"]["reco"])+1)))
 
 
 summary = pd.concat([storage_df, time_df], axis=1)

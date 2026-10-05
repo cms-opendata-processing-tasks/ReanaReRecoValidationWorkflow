@@ -5,6 +5,7 @@ import pandas as pd
 import boost_histogram as bh
 from scipy.stats import chi2 as chi2_dist
 import sys 
+from variables import variable_configs
 
 merged_nano = sys.argv[1]
 reference_root = sys.argv[2]
@@ -32,33 +33,8 @@ def two_sample_chi2(n_sim, n_data):
     ndof = mask.sum() - 1
     return chi2, ndof
 
-variable_configs = [
-    ("nElectron", "nElectron", 10, (0, 10)),
-    ("nMuon", "nMuon", 10, (0, 10)),
-    ("Electron_pt", "Electron_pt", 50, (0, 150)),
-    ("Muon_pt", "Muon_pt", 50, (0, 150)),
-    ("Electron_phi", "Electron_phi", 50, (-3.15, 3.15)),
-    ("Muon_phi", "Muon_phi", 50, (-3.15, 3.15)),
-    ("Electron_eta", "Electron_eta", 50, (-3, 3)),
-    ("Muon_eta", "Muon_eta", 50, (-3.15, 3.15)),
-    ("MET_phi", "MET_phi", 50, (-3.15, 3.15)),
-    ("MET_pt", "MET_pt", 50, (0, 200)),
-    ("nJet", "nJet", 20, (0, 15)),
-    ("Jet_pt", "Jet_pt", 50, (0, 150)),
-    ("Jet_phi", "Jet_phi", 50, (-3.15, 3.15)),
-    ("Jet_eta", "Jet_eta", 50, (-6, 6)),
-    ("nPhoton", "nPhoton", 20, (0, 10)),
-    ("Photon_pt", "Photon_pt", 50, (0, 150)),
-    ("Photon_phi", "Photon_phi", 50, (-3.15, 3.15)),
-    ("Photon_eta", "Photon_eta", 50, (-3, 3)),
-    ("nTau", "nTau", 20, (0, 10)),
-    ("Tau_pt", "Tau_pt", 50, (0, 150)),
-    ("Tau_phi", "Tau_phi", 50, (-3.15, 3.15)),
-    ("Tau_eta", "Tau_eta", 50, (-3, 3)),
-]
-
 results = []
-for var, tree_branch, bins, range_ in variable_configs:
+for var, tree_branch, bins, range_, _ in variable_configs:
     sim = load_variable(merged_nano, "Events", tree_branch) #Our generated NanoAOD file
     data = load_variable(reference_root, "Events", tree_branch)
     n_sim, n_data, edges = make_comparable_histograms(sim, data, bins, range_)

@@ -1,279 +1,90 @@
-import uproot
-import matplotlib.pyplot as plt
+import os
+import sys
+
 import awkward as ak
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
-import os 
+import pandas as pd
+import uproot
 
-file = uproot.open("/eos/user/m/mtarshih/my_project/results/nano_merged.root:Events")
-#Insert your own EOS directory where nano_merged.root exists
+from variables import variable_configs
 
-os.makedirs("plots", exist_ok=True)
+# Usage: Plotting.py <our nano_merged.root> <reference.root> <comparison_report.csv> <plot dir>
+merged_nano = sys.argv[1]
+reference_root = sys.argv[2]
+comparison_report = sys.argv[3]
+plot_dir = sys.argv[4]
 
-nElectron = ak.to_numpy(file['nElectron'].array())
-electron_pt  = ak.to_numpy(ak.flatten(file['Electron_pt'].array()))
-electron_phi = ak.to_numpy(ak.flatten(file['Electron_phi'].array()))
-electron_eta = ak.to_numpy(ak.flatten(file['Electron_eta'].array()))
+os.makedirs(plot_dir, exist_ok=True)
 
-nMuon = ak.to_numpy(file['nMuon'].array())
-muon_pt  = ak.to_numpy(ak.flatten(file['Muon_pt'].array()))
-muon_phi = ak.to_numpy(ak.flatten(file['Muon_phi'].array()))
-muon_eta = ak.to_numpy(ak.flatten(file['Muon_eta'].array()))
+# chi2 / p-value per variable, as computed by Stat_comparison.py
+report = pd.read_csv(comparison_report).set_index("variable")
 
-met_phi = ak.to_numpy(file['MET_phi'].array())
-met_pt    = ak.to_numpy(file['MET_pt'].array())
 
-nJet = ak.to_numpy(file['nJet'].array())
-jet_pt  = ak.to_numpy(ak.flatten(file['Jet_pt'].array()))
-jet_phi = ak.to_numpy(ak.flatten(file['Jet_phi'].array()))
-jet_eta = ak.to_numpy(ak.flatten(file['Jet_eta'].array()))
+def load_variable(tree, branch_name):
+    arr = tree[branch_name].array()
+    if arr.ndim > 1:
+        arr = ak.flatten(arr)
+    return ak.to_numpy(arr)
 
-nPhoton = ak.to_numpy(file['nPhoton'].array())
-photon_pt  = ak.to_numpy(ak.flatten(file['Photon_pt'].array()))
-photon_phi = ak.to_numpy(ak.flatten(file['Photon_phi'].array()))
-photon_eta = ak.to_numpy(ak.flatten(file['Photon_eta'].array()))
 
-nTau = ak.to_numpy(file['nTau'].array())
-tau_pt  = ak.to_numpy(ak.flatten(file['Tau_pt'].array()))
-tau_phi = ak.to_numpy(ak.flatten(file['Tau_phi'].array()))
-tau_eta = ak.to_numpy(ak.flatten(file['Tau_eta'].array()))
+def normalised_hist(values, bins, x_range):
+    counts, edges = np.histogram(values, bins=bins, range=x_range)
+    total = counts.sum()
+    if total == 0:
+        return np.zeros(len(counts)), np.zeros(len(counts)), edges
+    return counts / total, np.sqrt(counts) / total, edges
 
-def plot_histogram(data, bins, x_range, title, xlabel, ylabel, filename):
 
-    plt.figure(figsize=(8, 6))
-    
-    plt.hist(
-        data, 
-        bins=bins, 
-        range=x_range, 
-        color='#0b57d0', 
-        alpha=0.8, 
-        edgecolor='black'
+def plot_comparison(var, ours, ref, bins, x_range, xlabel):
+    h_ours, err_ours, edges = normalised_hist(ours, bins, x_range)
+    h_ref, err_ref, _ = normalised_hist(ref, bins, x_range)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+
+    fig, (ax, rax) = plt.subplots(
+        2, 1, figsize=(8, 7), sharex=True,
+        gridspec_kw={"height_ratios": [3, 1], "hspace": 0.05},
     )
 
-    plt.title(title, fontsize=14, fontweight='bold')
-    plt.xlabel(xlabel, fontsize=12)
-    plt.ylabel(ylabel, fontsize=12)
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    ax.stairs(h_ref, edges, color="#0b57d0", linewidth=1.5,
+              label="Reference (official NanoAOD), N=" + str(len(ref)))
+    ax.fill_between(edges, np.append(h_ref - err_ref, 0), np.append(h_ref + err_ref, 0),
+                    step="post", color="#0b57d0", alpha=0.2, linewidth=0)
+    ax.errorbar(centers, h_ours, yerr=err_ours, fmt="o", color="black", markersize=4,
+                label="Reprocessed (this workflow), N=" + str(len(ours)))
 
-    plt.savefig(filename)
-    plt.close()
+    if var in report.index:
+        row = report.loc[var]
+        stats = r"$\chi^2$/ndof = %.2f / %d,  p = %.3g  [%s]" % (
+            row["chi2"], row["ndof"], row["p_value"], row["flag"])
+        ax.set_title(stats, fontsize=11, loc="right",
+                     color="#b3261e" if row["flag"] == "MISMATCH" else "black")
 
-plot_histogram(
-    data=electron_pt, 
-    bins=50, 
-    x_range=(0, 150), 
-    title="Electron Transverse Momentum ($p_T$)", 
-    xlabel="Electron $p_T$ (GeV)", 
-    ylabel="Number of Electrons",
-    filename="plots/plot_1_pt.png"
-)
+    ax.set_title(var, fontsize=13, fontweight="bold", loc="left")
+    ax.set_ylabel("Normalised entries")
+    ax.legend(fontsize=9)
+    ax.grid(axis="y", linestyle="--", alpha=0.5)
 
-plot_histogram(
-    data=electron_phi, 
-    bins=50, 
-    x_range=(-3.15, 3.15), 
-    title=r"Electron Azimuthal Angle ($\phi$)", 
-    xlabel=r"Electron $\phi$ (rad)", 
-    ylabel="Number of Electrons",
-    filename="plots/plot_2_phi.png"
-)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(h_ref > 0, h_ours / h_ref, np.nan)
+        ratio_err = np.where(h_ref > 0, err_ours / h_ref, np.nan)
+    rax.errorbar(centers, ratio, yerr=ratio_err, fmt="o", color="black", markersize=3)
+    rax.axhline(1.0, color="#0b57d0", linewidth=1)
+    rax.set_ylim(0, 2)
+    rax.set_ylabel("Ours / Ref")
+    rax.set_xlabel(xlabel)
+    rax.grid(axis="y", linestyle="--", alpha=0.5)
 
-plot_histogram(
-    data=electron_eta, 
-    bins=50, 
-    x_range=(-3.0, 3.0), 
-    title=r"Electron Pseudorapidity ($\eta$)", 
-    xlabel=r"Electron $\eta$", 
-    ylabel="Number of Electrons",
-    filename="plots/plot_3_eta.png"
-)
+    fig.savefig(os.path.join(plot_dir, var + ".png"), dpi=120, bbox_inches="tight")
+    plt.close(fig)
 
-plot_histogram(
-    data=met_pt, 
-    bins=50, 
-    x_range=(0, 200), 
-    title="Missing Transverse Energy (MET)", 
-    xlabel="MET (GeV)", 
-    ylabel="Number of Events",
-    filename="plots/plot_4_met.png"
-)
 
-plot_histogram(
-    data=nElectron, 
-    bins=10, 
-    x_range=(0, 10), 
-    title="Electron Multiplicity per Event", 
-    xlabel="Number of Electrons", 
-    ylabel="Number of Events",
-    filename="plots/plot_5_nelectron.png"
-)
-
-plot_histogram(
-    data=nMuon, 
-    bins=10, 
-    x_range=(0, 10), 
-    title="Muon Multiplicity per Event", 
-    xlabel="Number of Muons", 
-    ylabel="Number of Events",
-    filename="plots/plot_6_nmuon.png"
-)
-
-plot_histogram(
-    data=muon_pt, 
-    bins=50, 
-    x_range=(0, 150), 
-    title="Muon Transverse Momentum ($p_T$)", 
-    xlabel="Muon $p_T$ (GeV)", 
-    ylabel="Number of Muons",
-    filename="plots/plot_7_pt.png"
-)
-
-plot_histogram(
-    data=muon_phi, 
-    bins=50, 
-    x_range=(-3.15, 3.15), 
-    title=r"Muon Azimuthal Angle ($\phi$)", 
-    xlabel=r"Muon $\phi$ (rad)", 
-    ylabel="Number of Muons",
-    filename="plots/plot_8_phi.png"
-)
-
-plot_histogram(
-    data=muon_eta, 
-    bins=50, 
-    x_range=(-3.15, 3.15), 
-    title=r"Muon Pseudorapidity ($\eta$)", 
-    xlabel=r"Muon $\eta$", 
-    ylabel="Number of Muons",
-    filename="plots/plot_9_eta.png"
-)
-
-plot_histogram(
-    data=met_phi, 
-    bins=50, 
-    x_range=(-3.15, 3.15), 
-    title=r"Missing Transverse Energy Azimuthal Angle ($\phi$)", 
-    xlabel=r"MET $\phi$ (rad)", 
-    ylabel="Number of Events",
-    filename="plots/plot_10_met_phi.png"
-)
-
-plot_histogram(
-    data=nJet, 
-    bins=20, 
-    x_range=(0, 15), 
-    title="Jet Multiplicity per Event", 
-    xlabel="Number of Jets", 
-    ylabel="Number of Events",
-    filename="plots/plot_11_njet.png"
-)
-
-plot_histogram(
-    data=jet_pt, 
-    bins=50, 
-    x_range=(0, 150), 
-    title="Jet Transverse Momentum ($p_T$)", 
-    xlabel="Jet $p_T$ (GeV)", 
-    ylabel="Number of Jets",
-    filename="plots/plot_12_pt.png"
-)
-
-plot_histogram(
-    data=jet_phi, 
-    bins=50, 
-    x_range=(-3.15, 3.15), 
-    title=r"Jet Azimuthal Angle ($\phi$)", 
-    xlabel=r"Jet $\phi$ (rad)", 
-    ylabel="Number of Jets",
-    filename="plots/plot_13_phi.png"
-)
-
-plot_histogram(
-    data=jet_eta, 
-    bins=50, 
-    x_range=(-6, 6), 
-    title=r"Jet Pseudorapidity ($\eta$)", 
-    xlabel=r"Jet $\eta$", 
-    ylabel="Number of Jets",
-    filename="plots/plot_14_eta.png"
-)
-
-plot_histogram(
-    data=nPhoton, 
-    bins=20, 
-    x_range=(0, 10), 
-    title="Photon Multiplicity per Event", 
-    xlabel="Number of Photons", 
-    ylabel="Number of Events",
-    filename="plots/plot_15_nphoton.png"
-)
-
-plot_histogram(
-    data=photon_pt, 
-    bins=50, 
-    x_range=(0, 150), 
-    title="Photon Transverse Momentum ($p_T$)", 
-    xlabel="Photon $p_T$ (GeV)", 
-    ylabel="Number of Photons",
-    filename="plots/plot_16_pt.png"
-)
-
-plot_histogram(
-    data=photon_phi, 
-    bins=50, 
-    x_range=(-3.15, 3.15), 
-    title=r"Photon Azimuthal Angle ($\phi$)", 
-    xlabel=r"Photon $\phi$ (rad)", 
-    ylabel="Number of Photons",
-    filename="plots/plot_17_phi.png"
-)
-
-plot_histogram(
-    data=photon_eta, 
-    bins=50, 
-    x_range=(-3.0, 3.0), 
-    title=r"Photon Pseudorapidity ($\eta$)", 
-    xlabel=r"Photon $\eta$", 
-    ylabel="Number of Photons",
-    filename="plots/plot_18_eta.png"
-)
-
-plot_histogram(
-    data=nTau, 
-    bins=20, 
-    x_range=(0, 10), 
-    title="Tau Multiplicity per Event", 
-    xlabel="Number of Taus", 
-    ylabel="Number of Events",
-    filename="plots/plot_19_ntau.png"
-)
-
-plot_histogram(
-    data=tau_pt, 
-    bins=50, 
-    x_range=(0, 150), 
-    title="Tau Transverse Momentum ($p_T$)", 
-    xlabel="Tau $p_T$ (GeV)", 
-    ylabel="Number of Taus",
-    filename="plots/plot_20_pt.png"
-)
-
-plot_histogram(
-    data=tau_phi, 
-    bins=50, 
-    x_range=(-3.15, 3.15), 
-    title=r"Tau Azimuthal Angle ($\phi$)", 
-    xlabel=r"Tau $\phi$ (rad)", 
-    ylabel="Number of Taus",
-    filename="plots/plot_21_phi.png"
-)
-
-plot_histogram(
-    data=tau_eta, 
-    bins=50, 
-    x_range=(-3.0, 3.0), 
-    title=r"Tau Pseudorapidity ($\eta$)", 
-    xlabel=r"Tau $\eta$", 
-    ylabel="Number of Taus",
-    filename="plots/plot_22_eta.png"
-)
+with uproot.open(merged_nano) as f_ours, uproot.open(reference_root) as f_ref:
+    ours_tree = f_ours["Events"]
+    ref_tree = f_ref["Events"]
+    for var, branch, bins, x_range, xlabel in variable_configs:
+        print("Plotting " + var)
+        plot_comparison(var, load_variable(ours_tree, branch), load_variable(ref_tree, branch),
+                        bins, x_range, xlabel)

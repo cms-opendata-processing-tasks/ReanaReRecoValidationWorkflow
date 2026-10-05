@@ -1,0 +1,113 @@
+    set -e
+    mkdir -p metrics
+
+    cat << 'PAYLOAD_EOF' >> run_payload_{wildcards.jobIndex}.sh
+    export WORKDIR=$(pwd)
+
+    JOB_DIR=$(mktemp -d)
+    cd $JOB_DIR
+
+    echo "Sourcing CMS environment"
+    eval "$(cat $WORKDIR/{input.environment})"
+
+    echo "Checking WORKDIR"
+    ls -lh $WORKDIR/
+
+    export STEP={params.step}
+    if [ "$STEP" = "reco" ]
+    then
+        export INPUT_FILE={EOS_MGM_URL}/$(sed -n '{wildcards.jobIndex}p' $WORKDIR/{RAW_FILES_PATH})
+    else
+        export INPUT_FILE=file:{EOS_PATH}/results/{params.prev_step}_{wildcards.jobIndex}.root
+    fi
+
+    echo "Reached scramming"
+    scram b
+
+    eval `scramv1 runtime -sh`
+
+    mkdir -p $WORKDIR/results
+
+    echo "Fetching real-data step config"
+    eval "$(cat $WORKDIR/{input.cmd_file})"
+
+    echo "Running {params.step} cmsRun"
+
+    mkdir -p $WORKDIR/cfg_files
+    cat <<EOF >> {params.step}_config.py
+
+process.source.fileNames = cms.untracked.vstring("${{INPUT_FILE}}")
+process.maxEvents.input = cms.untracked.int32({params.events})
+
+if hasattr(process, 'RandomNumberGeneratorService'):
+    workflow_seed = 12345 + int({wildcards.jobIndex})
+    for param in process.RandomNumberGeneratorService.parameterNames_():
+        module = getattr(process.RandomNumberGeneratorService, param)
+        if hasattr(module, 'initialSeed'):
+            module.initialSeed = cms.untracked.uint32(workflow_seed)
+
+if "{params.step}" == "nano":
+    existing_output = list(process.outputModules.values())[0]
+    process.NANOAODoutput = cms.OutputModule("NanoAODOutputModule",
+        fileName = cms.untracked.string("file:{params.step}_output.root"),
+        outputCommands = existing_output.outputCommands,
+        compressionLevel = cms.untracked.int32(9),
+        compressionAlgorithm = cms.untracked.string("LZMA"),
+    )
+    process.NANOAODoutput_step = cms.EndPath(process.NANOAODoutput)
+    process.schedule.append(process.NANOAODoutput_step)
+else:
+    
+    candidate_modules = [m for m in process.outputModules.values() if not hasattr(m, "SelectEvents")]
+    main_output = None
+    # AOD before MINIAOD, giving MINIAOD causes ProductNotFound.
+    for tier in ["AOD", "MINIAOD"]:
+        for m in candidate_modules:
+            if hasattr(m, "dataset") and hasattr(m.dataset, "dataTier") and m.dataset.dataTier.value() == tier:
+                main_output = m
+                break
+        if main_output is not None:
+            break
+    if main_output is None:
+        non_dqm_modules = [m for m in candidate_modules if m.type_() != "DQMRootOutputModule"]
+        main_output = non_dqm_modules[0] if non_dqm_modules else candidate_modules[0]
+    main_output.fileName = cms.untracked.string("file:{params.step}_output.root")
+EOF
+
+    cp {params.step}_config.py $WORKDIR/cfg_files/{params.step}_config_{wildcards.jobIndex}.py
+
+    cmsRun {params.step}_config.py > cmsRun.log 2>&1 || true
+
+    echo "Listing directories, to better understand what it looks like:"
+    ls -lh
+
+    if ! ls *.root 1> /dev/null 2>&1; then
+        echo "[ERROR] cmsRun exited, but no .root file was created"
+        echo "[ERROR] Dumping the cmsRun log to see the exact CMS physics error:"
+        cat cmsRun.log
+        exit 1
+    fi
+
+    if grep -q "Begin Fatal Exception" cmsRun.log; then
+        echo "[ERROR] cmsRun hit a fatal exception, dumping the log:"
+        cat cmsRun.log
+        exit 1
+    fi
+
+    cp cmsRun.log $WORKDIR/{params.step}_{wildcards.jobIndex}.log
+
+    stat -c%s {params.step}_output.root > $WORKDIR/results/metrics/{params.step}_{wildcards.jobIndex}.size
+
+    mkdir -p {EOS_PATH}/results && cp {params.step}_output.root {EOS_PATH}/results/{params.step}_{wildcards.jobIndex}.root
+
+    sync
+    sleep 5
+
+    echo "{params.step} step done" > $WORKDIR/results/{params.step}_{wildcards.jobIndex}_confirm.txt
+    rm -rf $JOB_DIR
+PAYLOAD_EOF
+
+mkdir -p results/metrics
+/usr/bin/time -f "%e\t%M" -o results/metrics/{params.step}_{wildcards.jobIndex}.tsv bash run_payload_{wildcards.jobIndex}.sh
+
+rm run_payload_{wildcards.jobIndex}.sh
