@@ -1,5 +1,5 @@
-# Shared by Stat_comparison.py and Plotting.py so the chi2 test and the
-# plots always use identical binning.
+# Variables shown as overlay plots by Plotting.py (Event_comparison.py
+# itself compares every branch in the file).
 # (name, branch in Events tree, n_bins, (x_min, x_max), x-axis label)
 variable_configs = [
     ("nElectron", "nElectron", 10, (0, 10), "Number of electrons"),

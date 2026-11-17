@@ -1,310 +1,69 @@
-import os
-import time
-
-BASE_CONTAINER="docker://gitlab-registry.cern.ch/cms-cloud/cmssw-docker/cc7-cms"
-OPENDATACLIENT_CONTAINER="docker://cernopendata/cernopendata-client:latest"
-
-RECORD_ID=config.get("record_id", 0)
-RAW_FILE_LIST=str(config.get("raw_file_list", "DoubleEG.txt")).strip()
-EOS_MGM_URL=str(config.get("eos_mgm_url", "root://eospublic.cern.ch")).strip()
-numFiles=config.get("num_files", 1)
-eventsPerJob=config.get("eventsPerJob", 1)
-EOS_PATH=str(config.get("eos_outdir", "not found")).strip()
-
-
+# CMS RAW reprocessing validation: reruns the official processing of an Open
+# Data record's RAW input and compares the output with the record's files.
+# Parameters: README.md. Known REANA/CMS issues: docs/known-issues.md.
 #
-# f-strings are deliberately avoided everywhere in this Snakefile due Reana not handling them well.
-RAW_FILES_PATH = "workflow/raw_files/" + RAW_FILE_LIST
-with open(RAW_FILES_PATH) as f:
-    RAW_FILES = [line.strip() for line in f if line.strip()]
+# No f-strings in the Snakefile or rules: Snakemake 7 can't tokenize them
+# under Python 3.12 (reana-client). Plain Python modules (lib/, scripts/) can.
+import json
+import os
+import sys
 
-jobIndex = list(range(1, int(numFiles)+1))
+sys.path.insert(0, os.path.join(workflow.basedir, "lib"))
+from config import load_settings
 
-if numFiles > len(RAW_FILES):
-    raise ValueError(
-        "num_files (" + str(numFiles) + ") exceeds the number of RAW files listed in "
-        + RAW_FILES_PATH + " (" + str(len(RAW_FILES)) + ")"
-    )
+cfg = load_settings(config)
 
-with open("workflow/shell_commands/cleanup_shell.txt", "r") as f:
-    CLEANUP_SHELL = f.read()
+OPENDATACLIENT_CONTAINER = "docker://cernopendata/cernopendata-client:latest"
+PYTHON_CONTAINER = "python:3.11-slim"
+# dasgoclient, and ROOT from CMSSW_10_6 for haddnano.
+CC7_CONTAINER = "docker://gitlab-registry.cern.ch/cms-cloud/cmssw-docker/cc7-cms"
+BASE_CONTAINER = "docker://" + cfg.cmssw_image
 
-with open("workflow/shell_commands/real_data_step_shell.txt", "r") as f:
-    REAL_DATA_STEP_SHELL = f.read()
+JOB_INPUTS = "job_inputs.txt"
+PROVENANCE = "reference_provenance.json"
 
-onstart:
-    os.makedirs("workflow/results/metrics", exist_ok=True)
+# Hooks for rules/reana094_htcondor.smk, which overrides them for REANA 0.9.4
+# (reana.cern.ch). The defaults are what REANA 0.95 needs.
+STEP_CONTAINER = BASE_CONTAINER
+STEP_RESOURCES = {
+    "compute_backend": "htcondorcern",
+    "htcondor_max_runtime": cfg.htcondor_max_runtime,
+    "htcondor_request_memory": "6 GB",     # UL reco peaks at 4.7 GB
+}
+RUN_STEP_COMPAT_ARGS = ""
+COMPAT_TARGETS = []
 
-    with open("workflow/results/metrics/workflow_start_time.txt", "w") as f:
-        f.write(str(time.time()))
+def first_step_input():
+    """run_step.sh arguments overriding where the first step reads from."""
+    return ""
 
-onsuccess:
-    with open("workflow/results/metrics/workflow_start_time.txt", "r") as f:
-        start_time = float(f.read())
+def extra_step_inputs(step):
+    """Extra inputs of a step's rule."""
+    return []
 
-    total_time = time.time() - start_time
+def step_done(step):
+    """What later rules wait for to use a step's output."""
+    return ["results/" + step + "_{jobIndex}_confirm.txt"]
 
-    with open("workflow/results/metrics/workflow_total_time.txt", "w") as f:
-        f.write("Total Time (seconds): " + str(total_time))
+if cfg.reana_compat == "0.9":
+    include: "rules/reana094_htcondor.smk"
+
+include: "rules/inputs.smk"
+include: "rules/cache.smk"
+include: "rules/steps.smk"
+if cfg.comparison_tier == "nanoaod":
+    include: "rules/compare_nano.smk"
+else:
+    include: "rules/compare_aod.smk"
+include: "rules/metrics.smk"
+
 
 rule all:
+    default_target: True
     input:
-        "results/comparison_report.csv",
+        "results/branch_comparison.csv",
         "results/plots",
-        "results/metrics/metrics.csv"
-
-rule fetch_metadata:
-    output:
-        metadata=temporary("record_metadata.json")
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        cernopendata-client get-metadata --recid {RECORD_ID} > {output.metadata}
-        """
-
-rule parse_reco_metadata:
-    input:
-        metadata="record_metadata.json"
-    output:
-        temporary("reco_env.txt"),
-        cmd_file=temporary("cmsRun_fetch_reco.txt")
-    params:
-        step="reco"
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        set -e
-        python3 workflow/scripts/parse_real_data_metadata.py {input.metadata} {params.step} {output.cmd_file} reco_env.txt
-        """
-
-rule reco:
-    input:
-        cmd_file="cmsRun_fetch_reco.txt",
-        environment="reco_env.txt"
-    output:
-        temporary("results/reco_{jobIndex}_confirm.txt")
-    container:
-        BASE_CONTAINER
-    params:
-        events=eventsPerJob,
-        step="reco",
-        prev_step="dummy"
-    resources:
-        kubernetes_memory_limit='8Gi'
-    shell:
-        REAL_DATA_STEP_SHELL
-
-rule reco_cleanup:
-    input:
-        "results/pat_{jobIndex}_confirm.txt"
-    output:
-        "results/cleanup/reco_cleanup_{jobIndex}_confirm.txt"
-    params:
-        step="reco"
-    container:
-        BASE_CONTAINER
-    shell:
-        CLEANUP_SHELL
-
-rule parse_pat_metadata:
-    input:
-        metadata="record_metadata.json"
-    output:
-        temporary("pat_env.txt"),
-        cmd_file=temporary("cmsRun_fetch_pat.txt")
-    params:
-        step="pat"
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        set -e
-        python3 workflow/scripts/parse_real_data_metadata.py {input.metadata} {params.step} {output.cmd_file} pat_env.txt
-        """
-
-rule pat:
-    input:
-        "results/reco_{jobIndex}_confirm.txt",
-        cmd_file="cmsRun_fetch_pat.txt",
-        environment="pat_env.txt"
-    output:
-        temporary("results/pat_{jobIndex}_confirm.txt")
-    container:
-        BASE_CONTAINER
-    params:
-        events=eventsPerJob,
-        step="pat",
-        prev_step="reco"
-    shell:
-        REAL_DATA_STEP_SHELL
-
-rule pat_cleanup:
-    input:
-        "results/nano_{jobIndex}_confirm.txt"
-    output:
-        "results/cleanup/pat_cleanup_{jobIndex}_confirm.txt"
-    params:
-        step="pat"
-    container:
-        BASE_CONTAINER
-    shell:
-        CLEANUP_SHELL
-
-rule parse_nano_metadata:
-    input:
-        metadata="record_metadata.json"
-    output:
-        temporary("nano_env.txt"),
-        cmd_file=temporary("cmsRun_fetch_nano.txt")
-    params:
-        step="nano"
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        set -e
-        python3 workflow/scripts/parse_real_data_metadata.py {input.metadata} {params.step} {output.cmd_file} nano_env.txt
-        """
-
-rule nano:
-    input:
-        "results/cleanup/reco_cleanup_{jobIndex}_confirm.txt",
-        "results/pat_{jobIndex}_confirm.txt",
-        cmd_file="cmsRun_fetch_nano.txt",
-        environment="nano_env.txt"
-    output:
-        temporary("results/nano_{jobIndex}_confirm.txt")
-    container:
-        BASE_CONTAINER
-    params:
-        events=eventsPerJob,
-        step="nano",
-        prev_step="pat"
-    shell:
-        REAL_DATA_STEP_SHELL
-
-rule merge_nano:
-    input:
-        expand("results/cleanup/pat_cleanup_{jobIndex}_confirm.txt", jobIndex=jobIndex),
-        expand("results/nano_{jobIndex}_confirm.txt", jobIndex=jobIndex)
-    output:
-        merged_local="results/nano_merged.root"
-    params:
-        # The nano rule now writes flat NanoAOD directly (a second
-        # NanoAODOutputModule added to the live production process - see
-        # real_data_step_shell.txt), so these are ordinary flat NanoAOD
-        # files and plain haddnano.py merging (same as the MC pipeline)
-        # applies directly - no EDM remerge step needed.
-        eos_inputs=" ".join([EOS_PATH + "/results/nano_" + str(i) + ".root" for i in jobIndex]),
-        eos_output=EOS_PATH + "/results/nano_merged.root"
-    container:
-        BASE_CONTAINER
-    shell:
-        """
-        set -e
-        export WORKDIR=$(pwd)
-
-        echo "Sourcing CMS environment to get ROOT..."
-        export SCRAM_ARCH=slc7_amd64_gcc700
-        source /cvmfs/cms.cern.ch/cmsset_default.sh
-
-        scram p CMSSW CMSSW_10_6_30
-        cd CMSSW_10_6_30/src/
-        eval `scramv1 runtime -sh`
-        cd ../../
-
-        echo "Merging all NanoAOD files..."
-        python $WORKDIR/workflow/scripts/haddnano.py {output.merged_local} {params.eos_inputs}
-
-        cp {output.merged_local} {params.eos_output}
-        """
-
-rule fetch_reference_url:
-    input:
-        metadata="record_metadata.json"
-    output:
-        temporary("reference_url.txt")
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        set -e
-        cernopendata-client get-file-locations --recid {RECORD_ID} --protocol xrootd | head -n 1 \\
-            | sed 's#root://eospublic.cern.ch/#https://opendata.cern.ch#' > {output}
-        """
-
-rule histogram_results:
-    input:
-        merged_nano="results/nano_merged.root",
-        reference_url="reference_url.txt"
-    output:
-        report="results/comparison_report.csv",
-        plots=directory("results/plots")
-    params:
-        eos_output=EOS_PATH + "/results/comparison_report.csv",
-        eos_plots=EOS_PATH + "/results/plots"
-    container:
-        "python:3.11-slim"
-    shell:
-        """
-        set -e
-        export WORKDIR=$(pwd)
-
-        echo "Setting up local Python environment"
-        mkdir -p $WORKDIR/my_python_libs
-
-        echo "Installing required packages"
-        pip install --no-cache-dir uproot awkward numpy pandas boost_histogram scipy matplotlib --break-system-packages --target $WORKDIR/my_python_libs
-
-        export PYTHONPATH=$WORKDIR/my_python_libs:$PYTHONPATH
-
-        echo "Downloading reference NanoAOD file (official reco output for the same record)"
-        reference_url="$(cat {input.reference_url})"
-        python3 -c "import urllib.request; urllib.request.urlretrieve('$reference_url', 'reference_data.root')"
-
-        echo "Running statistical comparison"
-        python3 workflow/scripts/Stat_comparison.py {input.merged_nano} reference_data.root {output.report}
-
-        echo "Plotting our output vs the reference"
-        python3 workflow/scripts/Plotting.py {input.merged_nano} reference_data.root {output.report} {output.plots}
-
-        cp {output.report} {params.eos_output}
-        mkdir -p {params.eos_plots}
-        cp {output.plots}/*.png {params.eos_plots}/
-        """
-rule nano_cleanup:
-    input:
-        "results/nano_merged.root"
-    output:
-        "results/cleanup/nano_cleanup_{jobIndex}_confirm.txt"
-    params:
-        step="nano"
-    container:
-        BASE_CONTAINER
-    shell:
-        CLEANUP_SHELL
-
-rule measure_metrics:
-    input:
-        expand("results/cleanup/nano_cleanup_{jobIndex}_confirm.txt", jobIndex=jobIndex)
-    output:
-        "results/metrics/metrics.csv"
-    params:
-        metrics="results/metrics/"
-    container:
-        OPENDATACLIENT_CONTAINER
-    shell:
-        """
-        set -e
-        ls -lh
-
-        pip install pandas
-        pip install tabulate
-        mkdir -p results/metrics/
-        python3 workflow/scripts/metrics/metrics.py {params.metrics}
-
-        mkdir -p {EOS_PATH}/results/metrics
-        cp -r results/metrics/*.csv results/metrics/*.md {EOS_PATH}/results/metrics/
-        """
+        "results/metrics/metrics.csv",
+        STEP_CLEANUPS,
+        CACHE_TARGETS,
+        COMPAT_TARGETS

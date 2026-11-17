@@ -1,0 +1,7 @@
+cmssw_image: "gitlab-registry.cern.ch/cms-cloud/cmssw-docker/cc7-cms"
+steps: [reco, pat, nano]
+comparison_tier: nanoaod
+records:
+  - {years: [2016], collisions: [pp], tiers: [NANOAOD]}
+validated_runs:
+  - {first_run: 271036, last_run: 284044, file: /eos/opendata/cms/validated-runs/2016/Cert_271036-284044_13TeV_Legacy2016_Collisions16_JSON.txt}

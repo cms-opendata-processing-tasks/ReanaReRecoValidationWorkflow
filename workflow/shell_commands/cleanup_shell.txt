@@ -1,6 +1,0 @@
-set -e
-
-rm {EOS_PATH}/results/{params.step}_{wildcards.jobIndex}.root
-
-mkdir -p results/cleanup
-echo "Cleanup done" > results/cleanup/{params.step}_cleanup_{wildcards.jobIndex}_confirm.txt

@@ -1,32 +1,44 @@
 version: 0.9.4
 inputs:
+  directories:
+  - workflow/lib
+  - workflow/rules
+  - workflow/scripts
+  - workflow/profiles
+  - workflow/raw_files
+  - workflow/configs
   files:
   - workflow/Snakefile
-  - workflow/scripts/parse_real_data_metadata.py
-  - workflow/scripts/haddnano.py
-  - workflow/scripts/Stat_comparison.py
-  - workflow/scripts/Plotting.py
-  - workflow/scripts/variables.py
-  - workflow/scripts/metrics/metrics.py
-  - workflow/shell_commands/cleanup_shell.txt
-  - workflow/shell_commands/real_data_step_shell.txt
-  - workflow/raw_files/DoubleEG.txt
+  # Parameters: see the table in README.md.
   parameters:
-    record_id: 30521
-    raw_file_list: "DoubleEG.txt"
-    eos_mgm_url: "root://eospublic.cern.ch"
-    # Provide the number of RAW files to process (one reco/pat/nano job per
-    # file, must not exceed the number of lines in raw_file_list)
+    # Official derived record (e.g. 30520 = /DisplacedJet/Run2016G-UL2016_MiniAODv2_NanoAODv9-v1/NANOAOD):
+    # its methodology and provenance give the steps to rerun, its files are the reference.
+    record_id: 30520
+    # Empty: the profile matching the record's year, collision type and tier.
+    profile: ""
+    # Empty: the record's RAW parent in DAS, its files on CMS EOS disk (needs the grid proxy secret).
+    raw_file_list: ""
     num_files: 1
-    # max number of events to process per job/file
-    eventsPerJob: 1000
-    # eos_dir you want the results to be stored in
-    eos_outdir: "/eos/user/a/aalatalo/snakemaketest/data-validation-test"
+    eventsPerJob: 500
+    # Required: an EOS directory you can write to; each run writes to its own
+    # subfolder (results_name). Pass it with -p eos_outdir=/eos/user/<x>/<you>/...
+    eos_outdir: ""
+    results_name: ""
+    # Optional: an EOS directory caching step outputs between runs (empty: off).
+    cache_dir: ""
+    htcondor_max_runtime: "longlunch"
+    # "0.9": REANA 0.9.4 workarounds (reana.cern.ch); "none" for REANA 0.95.
+    reana_compat: "0.9"
+    # Debugging: lumi ranges for every job instead of the validated ones, and
+    # recipe fields per step, e.g. '{"reco": {"global_tag": "X"}}'.
+    lumis_to_process: ""
+    recipe_override: ""
 workflow:
   file: workflow/Snakefile
   type: snakemake
-
   resources:
     kerberos: True
     cvmfs:
     - cms.cern.ch
+    - grid.cern.ch
+    - unpacked.cern.ch

@@ -1,0 +1,23 @@
+cmssw_image: "gitlab-registry.cern.ch/cms-cloud/cmssw-docker/slc5-cms"
+steps: [prompt, reco]
+comparison_tier: aod
+records:
+  - {years: [2011], collisions: [PbPb], tiers: [AOD, RECO]}
+# What the record can't give for each step (resolve_recipe.py's "profile"
+# layer). The record states only the rereco ("Step: RECO"); the prompt reco
+# config is regenerated from its Tier-0 scenario with RunPromptReco.py.
+# provenance_process: the step's process name in the reference provenance
+# (the prompt reco is "RECO" there, the rereco "ppRECO"). The prompt reco
+# release changed with the run and the reference files mix them, so it is
+# given per run range; find a run's from the reference files holding only
+# one release.
+step_recipes:
+  prompt:
+    config: "RunPromptReco.py --scenario HeavyIons --reco"
+    provenance_process: RECO
+    releases:
+      - {first_run: 182838, last_run: 182838, release: CMSSW_4_4_2_patch7}
+  reco:
+    provenance_process: ppRECO
+validated_runs:
+  - {first_run: 181530, last_run: 183126, file: /eos/opendata/cms/validated-runs/hi/2011/Cert_181530-183126_HI7TeV_PromptReco_Collisions11_JSON.txt}

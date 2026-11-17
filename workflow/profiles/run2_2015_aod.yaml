@@ -1,0 +1,7 @@
+cmssw_image: "gitlab-registry.cern.ch/cms-cloud/cmssw-docker/slc6-cms"
+steps: [reco]
+comparison_tier: aod
+records:
+  - {years: [2015], collisions: [pp], tiers: [AOD]}
+validated_runs:
+  - {first_run: 246908, last_run: 260627, file: /eos/opendata/cms/validated-runs/2015/Cert_13TeV_16Dec2015ReReco_Collisions15_25ns_JSON_v2.txt}
