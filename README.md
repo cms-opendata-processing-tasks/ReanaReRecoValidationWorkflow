@@ -47,12 +47,10 @@ voms-proxy-init -voms cms -rfc -valid 192:00
 reana-client secrets-add --overwrite --file /tmp/x509up_u$(id -u) \
     --env VOMSPROXY_FILE=x509up_u$(id -u) --env VONAME=cms
 
-
-### Running
-
 ```
-reana-client run -w val_<record> -f reana.yaml -p record_id=<record> \
-    -p eos_outdir=/eos/user/<x>/<you>/validation [-p num_files=3 -p eventsPerJob=500]
+### Running
+```
+reana-client run -w val_<record>  -p record_id=<record> -p eos_outdir=/eos/user/<x>/<you>/validation [-p num_files=3 -p eventsPerJob=100]
 reana-client status -w val_<record>
 reana-client ls -w val_<record> results/
 ```
@@ -116,21 +114,3 @@ workflow/
 docs/known-issues.md        REANA, HTCondor, DAS and CMS issues met so far
 tests/                      pytest suite and dry runs
 ```
-
-## REANA 0.9.4 workarounds
-
-reana.cern.ch runs REANA 0.9.4. With `reana_compat: "0.9"` the workflow
-includes `rules/reana094_htcondor.smk` and runs steps with
-`scripts/reana094_compat.sh`. Once REANA 0.95 is there, delete both and the
-`include`, and the defaults in the `Snakefile` apply. Details:
-`docs/known-issues.md`.
-
-| Workaround | Why | Goes with |
-|---|---|---|
-| `stage_input` / `unstage_input` | HTCondor jobs get no Kerberos ticket and can't read CMS EOS. | Kerberos on HTCondor (0.95) |
-| One job chain at a time (`chain_ready_<k>`), steps wait for `check_step` | A shared wrapper file lets a job run another job's command. | Per-job wrapper files (0.95) |
-| Jobs delete files they didn't write (`compat_end`) | Jobs return the whole workspace; HTCondor removes jobs returning >1 GB. | Safer returned-file handling (0.95) |
-| Unpacked image (Singularity) | No memory request; UL reco crashes in Docker's 2 GB. | `htcondor_request_memory` (0.95) |
-| `FAILED` confirm files + `check_step` | Failed HTCondor jobs return no log. | Check on 0.95 |
-| 120 s latency wait | Outputs arrive ~12 s after the job is reported done. | Check on 0.95 |
-
