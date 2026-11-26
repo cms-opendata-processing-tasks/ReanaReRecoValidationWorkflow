@@ -1,0 +1,10 @@
+Hardware of the cmsRun steps (2 step jobs)
+
+  prompt  Intel 1
+  reco    Intel 1
+
+  job  step    vendor model                                         source
+  1    prompt  Intel  Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz    ran
+  1    reco    Intel  Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz    ran
+
+No reco or pat step ran on AMD.

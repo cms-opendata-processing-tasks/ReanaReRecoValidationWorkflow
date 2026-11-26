@@ -1,0 +1,3 @@
+job,step,host,vendor,model,cores,source
+1,prompt,b9g23p4661.cern.ch,Intel,Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz,,ran
+1,reco,b9p19p0551.cern.ch,Intel,Intel(R) Xeon(R) Silver 4216 CPU @ 2.10GHz,,ran

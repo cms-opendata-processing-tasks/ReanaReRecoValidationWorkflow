@@ -1,0 +1,14 @@
+Events in our output:        215
+Events in reference:         215
+Events matched (run, event): 215
+Our events not in reference: 0
+
+Branches compared: 131
+  DIFFERENT                0
+  MISSING_IN_OURS          0
+  MISSING_IN_REFERENCE     0
+  PRECISION                0
+  IDENTICAL                131
+  ZERO_FILLED_IN_REFERENCE 0
+
+PASS: output reproduces the official reference bit-for-bit
