@@ -72,12 +72,19 @@ def plot_comparison(var, ours, ref, bins, x_range, xlabel):
     ax.legend(fontsize=9)
     ax.grid(axis="y", linestyle="--", alpha=0.5)
 
+    # No error bars on the ratio: both histograms hold the same events, so the
+    # ratio has no statistical uncertainty; any point off 1 is a real difference.
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = np.where(h_ref > 0, h_ours / h_ref, np.nan)
-        ratio_err = np.where(h_ref > 0, err_ours / h_ref, np.nan)
-    rax.errorbar(centers, ratio, yerr=ratio_err, fmt="o", color="black", markersize=3)
+    # Ratios above the axis, and entries where the reference bin is empty, are
+    # drawn as red triangles at the top edge instead of disappearing.
+    ratio[(h_ref == 0) & (h_ours > 0)] = np.inf
+    ratio_max = 2.0
+    above = ratio > ratio_max
+    rax.plot(centers[~above], ratio[~above], "o", color="black", markersize=3)
+    rax.plot(centers[above], np.full(above.sum(), ratio_max * 0.97), "^", color="#b3261e", markersize=5)
     rax.axhline(1.0, color="#0b57d0", linewidth=1)
-    rax.set_ylim(0, 2)
+    rax.set_ylim(-0.05, ratio_max + 0.05)    # margin: ratios of exactly 0 or 2 stay fully visible
     rax.set_ylabel("Ours / Ref")
     rax.set_xlabel(xlabel)
     rax.grid(axis="y", linestyle="--", alpha=0.5)
