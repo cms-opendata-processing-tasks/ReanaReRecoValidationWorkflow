@@ -111,6 +111,7 @@ workflow/
   scripts/hardware_report.py  hardware per step and job (results/hardware.*)
   profiles/                 per era: image, steps, comparison tier, golden JSONs
   raw_files/                curated RAW file lists
-docs/known-issues.md        REANA, HTCondor, DAS and CMS issues met so far
-tests/                      pytest suite and dry runs
 ```
+
+## History
+This repository was initially a fork of https://github.com/cms-opendata-processing-tasks/FullSimulationReanaWorkflow. It was separated off the fork due to differing in scope and target, as this repository focuses on reproducing results bit to bit to an exact reference, where the other works on reproducing statistically equal data through simulation. 
